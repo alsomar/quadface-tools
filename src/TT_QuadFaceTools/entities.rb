@@ -1726,9 +1726,7 @@ module TT::Plugins::QuadFaceTools
         quad
       elsif QuadFace.is?( entity )
         quad = QuadFace.new( entity )
-        if add_to_cache && @types[ Sketchup::Face ][ entity ].nil?
-          cache_entity( quad )
-        end
+        cache_entity( quad ) if add_to_cache
         quad
       else
         entity
