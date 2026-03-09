@@ -211,7 +211,7 @@ module TT::Plugins::QuadFaceTools
       @scale = 1
 
       @vertex_index = 1
-      @uvs = TT::JSON.new # UV => Index
+      @uvs = {} # UV => Index
 
       @smoothing_index = 1
 
@@ -236,7 +236,7 @@ module TT::Plugins::QuadFaceTools
       surfaces = Surface.get( native_entities, true )
 
       # Collect geometry data.
-      vertices = TT::JSON.new # Vertex => Index (Needs to be here due to instances.)
+      vertices = {} # Vertex => Index (Needs to be here due to instances.)
       instances = []
       smoothing_groups = []
       for entity in surfaces
@@ -284,23 +284,15 @@ module TT::Plugins::QuadFaceTools
     # @return [Array<Sketchup::Face,QuadFace>]
     # @since 0.8.0
     def sort_surfaces_by_material( surfaces )
-      surfaces.sort { |a,b|
-        if a.size == 1 && b.size == 1
-
-          if a[0].material.nil?
-            -1
-          elsif b[0].material.nil?
-            1
-          else
-            a[0].material <=> b[0].material
-          end
-
-        elsif a.size == 1
-          -1
-        elsif b.size == 1
-          1
+      # Compute sort key once per surface instead of repeatedly calling .material
+      # inside the comparator (avoids O(n log n) SketchUp API calls).
+      surfaces.sort_by { |s|
+        if s.size > 1
+          [1, 0]
+        elsif s[0].material.nil?
+          [0, 0]
         else
-          0
+          [0, s[0].material.object_id]
         end
       }
     end
@@ -399,29 +391,24 @@ module TT::Plugins::QuadFaceTools
       # Write vertex index.
       if !new_vertices.empty?
         file.puts ''
-        for vertex in new_vertices
-          global_position = vertex.position.transform( transformation )
-          point = global_position.to_a.map { |i| i * @scale }.join(' ')
-          file.puts "v #{point}"
-        end
+        scale = @scale
+        file.puts new_vertices.map { |vertex|
+          p = vertex.position.transform( transformation )
+          "v #{p.x * scale} #{p.y * scale} #{p.z * scale}"
+        }
       end
 
       # Write UV index.
       if @options[:texture_maps] && !new_uvs.empty?
-        file.puts '' if
-        for uvs in new_uvs
-          coordinate = uvs.join(' ')
-          file.puts "vt #{coordinate}"
-        end
+        file.puts ''
+        file.puts new_uvs.map { |uv| "vt #{uv[0]} #{uv[1]}" }
       end
 
       # Write face definitions.
       file.puts '' if !material_groups.empty? && !new_vertices.empty?
       for material, polygons in material_groups
         set_active_material( file, material )
-        for polygon in polygons
-          file.puts "f #{polygon}"
-        end
+        file.puts polygons.map { |polygon| "f #{polygon}" }
       end
 
       # Turn off smoothing after each surface.

@@ -35,7 +35,6 @@ class MtlParser
   # @return [Boolean]
   def read(filename)
     unless File.exist?(filename)
-      puts "unable to find file: #{filename}"
       return false
     end
     # @see http://paulbourke.net/dataformats/mtl/

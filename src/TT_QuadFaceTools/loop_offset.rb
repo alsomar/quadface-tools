@@ -142,7 +142,8 @@ class LoopOffset
     # First in one direction, this will be enough if the loop is closed.
     results = traverse(stack)
     # If it's not a closed loop we also need to traverse in the other direction.
-    if results.size < @loop.size
+    # Use <= to also add the trailing boundary edge for open loops (N+1 total).
+    if results.size <= @loop.size
       stack.clear
       stack << [pt2, edge2, @start_quad]
       # We need to reverse the order of the first set in order to make the new

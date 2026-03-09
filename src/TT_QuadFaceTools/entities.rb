@@ -800,7 +800,7 @@ module TT::Plugins::QuadFaceTools
     def self.get( entities, sketchup_surface = false  )
       cache = {}
       surfaces = []
-      for e in entities.map
+      for e in entities
         next if cache.include?( e )
         if e.is_a?( Sketchup::Face )
           surface = Surface.new( e, sketchup_surface )
@@ -921,7 +921,7 @@ module TT::Plugins::QuadFaceTools
       surface = { face => face } # Use hash for speedy lookup
       stack = [ face ]
       until stack.empty?
-        face = stack.shift
+        face = stack.pop
         edges = inner_edges( face.edges )
         for edge in edges
           for face in edge.faces

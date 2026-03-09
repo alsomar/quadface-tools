@@ -23,6 +23,15 @@ class ObjImporter < Sketchup::Importer
       ORIGIN, X_AXIS, Z_AXIS, Y_AXIS.reverse
   ).freeze
 
+  # Encodings most commonly encountered in real-world OBJ files, tried first
+  # before falling back to the full Encoding.name_list to reduce retry loops.
+  PRIORITY_ENCODINGS = %w[
+    Windows-1252 Windows-1251 Windows-1250 Windows-1253 Windows-1254
+    Windows-1255 Windows-1256 Windows-1257 GBK GB18030 Big5 Shift_JIS
+    EUC-JP EUC-KR KOI8-R ISO-8859-1 ISO-8859-2 ISO-8859-5 ISO-8859-7
+    ISO-8859-15
+  ].freeze
+
   class ObjEncodingError < StandardError; end
 
   attr_accessor :stats
@@ -124,37 +133,42 @@ class ObjImporter < Sketchup::Importer
     Sketchup.status_text = 'Importing OBJ file...'
     # @see http://paulbourke.net/dataformats/obj/
     # @see http://www.martinreddy.net/gfx/3d/OBJ.spec
+    # Precompute per-file constants so the hot line-parsing loop avoids
+    # repeated method calls and case-statement lookups.
+    unit_scale = unit_to_inch_ratio(options[:units])
+    swap_yz    = options[:swap_yz]
     custom_encodings = nil
     encoding = 'UTF-8'
     attempts = 0
     begin
     File.open(filename, "r:#{encoding}:UTF-8") { |file|
-      puts "Reading file. External encoding: #{file.external_encoding}"
       file.each_line { |line|
         # Filter out comments.
         next if line.start_with?('#')
-        # Filter out empty lines.
-        next if line.strip.empty?
         # Parse the line data and extract the line token.
+        # split(' ') strips leading/trailing whitespace and handles empty lines.
         begin
-          data = line.split(/\s+/)
+          data = line.split(' ')
         rescue ArgumentError => e
-          #p line.bytes if e.message.include?('invalid byte sequence')
           if e.message.include?('invalid byte sequence')
-            p line.encoding
-            puts line
+            # Encoding mismatch — outer rescue block will retry with next encoding.
           end
           raise
         end
+        next if data.empty?
         token = data.shift
         case token
         when 'v'
           # Read the vertex data.
           raise 'invalid vertex data' if data.size < 3
-          x, y, z = data.map { |n| convert_to_length(n, options[:units]) }
-          point = Geom::Point3d.new(x, y, z)
-          point.transform!(SWAP_YZ_TRANSFORM) if options[:swap_yz]
-          vertex_cache.add_vertex(*point.to_a)
+          x = data[0].to_f * unit_scale
+          y = data[1].to_f * unit_scale
+          z = data[2].to_f * unit_scale
+          if swap_yz
+            vertex_cache.add_vertex(x, z, -y)
+          else
+            vertex_cache.add_vertex(x, y, z)
+          end
         when 'vt'
           # Read the vertex texture data.
           # Spec says default is 0.0, but that yield invalid data for SketchUp.
@@ -176,8 +190,6 @@ class ObjImporter < Sketchup::Importer
             v = parse_triplet(triplet)[0]
             vertex_cache.get_vertex(v)
           }
-          puts 'Line:'
-          p points
           entities.add_edges(points) unless @parse_only
           stats.edges += (points.size - 1)
           stats.lines += 1
@@ -191,15 +203,13 @@ class ObjImporter < Sketchup::Importer
             if points.include?(point)
               # TODO: Message error back to user without raising error. Need to
               # continue reading file.
-              puts 'Duplicate points found'
-              puts "Line #{file.lineno}: #{line}"
               stats.errors += 1
               next
             end
             points << point
             if vt
               uvw = vertex_cache.get_uvw(vt)
-              uvw.z = 1.0 if uvw.z = 0.0 # Account for some weird files.
+              uvw.z = 1.0 if uvw.z == 0.0 # Account for some weird files.
               mapping << point
               mapping << TT::UVQ.normalize(uvw)
             end
@@ -207,7 +217,6 @@ class ObjImporter < Sketchup::Importer
           unless @parse_only
             face = create_face(entities, points, material, mapping)
             if face.nil?
-              puts "Line #{file.lineno}: #{line}"
               stats.errors += 1
               next
             end
@@ -287,11 +296,12 @@ class ObjImporter < Sketchup::Importer
         raise
       end
       # TODO: Log errors. (Allow user to access?)
-      puts error.backtrace.first
-      custom_encodings ||= Encoding.name_list
+      if custom_encodings.nil?
+        custom_encodings = (PRIORITY_ENCODINGS + Encoding.name_list).uniq
+        custom_encodings.delete(encoding)
+      end
       raise if custom_encodings.empty?
-      encoding = custom_encodings.pop
-      puts "Failed to read file. Retrying with encoding: #{encoding}"
+      encoding = custom_encodings.shift
       attempts += 1
       raise 'MAX ATTEMPTS' if attempts > Encoding.list.size
       retry

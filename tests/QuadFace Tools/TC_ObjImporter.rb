@@ -278,4 +278,37 @@ class TC_ObjImporter < TestUp::TestCase
     assert_parsed(expected, importer)
   end
 
+
+  # ======= Performance benchmarks =======
+  # These tests measure duration but only assert a generous upper bound.
+  # Run them to compare timings before/after optimisation changes.
+
+  def test_benchmark_import_56k_faces
+    obj_file = get_test_obj('SPSC.obj')
+    options = {
+      units: QFT::ObjImporter::UNIT_METERS,
+      swap_yz: true,
+    }
+    importer = get_importer(options, parse_only: true)
+    t0 = Time.now
+    importer.load_file(obj_file, false)
+    elapsed = Time.now - t0
+    puts format("\n  [benchmark] 56k faces import: %.1f ms", elapsed * 1000)
+    assert(elapsed < 30.0, "Import 56k faces took too long: #{elapsed.round(2)}s")
+  end
+
+  def test_benchmark_import_103k_faces
+    obj_file = get_test_obj('encoding.obj')
+    options = {
+      units: QFT::ObjImporter::UNIT_INCHES,
+      swap_yz: false,
+    }
+    importer = get_importer(options, parse_only: true)
+    t0 = Time.now
+    importer.load_file(obj_file, false)
+    elapsed = Time.now - t0
+    puts format("\n  [benchmark] 103k faces import: %.1f ms", elapsed * 1000)
+    assert(elapsed < 30.0, "Import 103k faces took too long: #{elapsed.round(2)}s")
+  end
+
 end # class
