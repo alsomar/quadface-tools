@@ -204,7 +204,7 @@ module TT::Plugins::QuadFaceTools
         :group_type   => GROUP_BY_OBJECTS,
         :swap_yz      => true,
         :texture_maps => true,
-        #:triangulate  => false,
+        :triangulate  => false,
         :selection    => false
       }
 
@@ -354,6 +354,15 @@ module TT::Plugins::QuadFaceTools
             @vertex_index += 1
           end
         end
+        # Fan-triangulate n-gons (5+ vertices) if requested. Triangles and
+        # quads are left intact to preserve the quad mesh structure.
+        loops = if @options[:triangulate] && outer_loop.size > 4
+          (1..outer_loop.size - 2).map { |i|
+            [outer_loop[0], outer_loop[i], outer_loop[i + 1]]
+          }
+        else
+          [outer_loop]
+        end
         if @options[:texture_maps] && textured?( face )
           # Build UV index
           face_uv_indexes = {}
@@ -366,18 +375,18 @@ module TT::Plugins::QuadFaceTools
             end
             face_uv_indexes[ vertex ] = index
           end
-          # Build face definition.
-          polygon = outer_loop.map { |vertex|
-            vp = vertices[ vertex ]
-            vt = face_uv_indexes[ vertex ]
-            "#{vp}/#{vt}"
-          }.join(' ')
+          # Build face definitions.
+          polygons = loops.map { |loop|
+            loop.map { |vertex| "#{vertices[vertex]}/#{face_uv_indexes[vertex]}" }.join(' ')
+          }
         else
-          # Build face definition.
-          polygon = outer_loop.map { |vertex| vertices[ vertex ] }.join(' ')
+          # Build face definitions.
+          polygons = loops.map { |loop|
+            loop.map { |vertex| vertices[vertex] }.join(' ')
+          }
         end
         material_groups[ face.material ] ||= []
-        material_groups[ face.material ] << polygon
+        material_groups[ face.material ].concat(polygons)
       end
 
       # Enable smoothing for each group only if it has more than one face.
@@ -677,7 +686,7 @@ module TT::Plugins::QuadFaceTools
         end
         dialog.update_value( 'lstInstances',         options[:group_type] )
         dialog.update_value( 'chkExportSelection',   options[:selection] )
-        #dialog.update_value( 'chkTriangulate',       options[:triangulate] )
+        dialog.update_value( 'chkTriangulate',       options[:triangulate] )
         dialog.update_value( 'chkExportTextureMaps', options[:texture_maps] )
         dialog.update_value( 'chkSwapYZ',            options[:swap_yz] )
         dialog.update_value( 'lstUnits',             options[:units] )
@@ -689,14 +698,14 @@ module TT::Plugins::QuadFaceTools
         results = {
           :group_type   => dialog.get_element_value('lstInstances'),
           :selection    => dialog.get_element_value('chkExportSelection'),
-          #:triangulate  => dialog.get_element_value('chkTriangulate'),
+          :triangulate  => dialog.get_element_value('chkTriangulate'),
           :texture_maps => dialog.get_element_value('chkExportTextureMaps'),
           :swap_yz      => dialog.get_element_value('chkSwapYZ'),
           :units        => dialog.get_element_value('lstUnits')
         }
         # Convert to Ruby values.
         results[:selection]    = (results[:selection] == 'true')
-        #results[:triangulate]  = (results[:triangulate] == 'true')
+        results[:triangulate]  = (results[:triangulate] == 'true')
         results[:texture_maps] = (results[:texture_maps] == 'true')
         results[:swap_yz]      = (results[:swap_yz] == 'true')
         results[:units]        = results[:units].to_i

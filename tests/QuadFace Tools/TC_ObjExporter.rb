@@ -192,6 +192,55 @@ class TC_ObjExporter < TestUp::TestCase
   end
 
 
+  # Creates a regular pentagon on the XY plane.
+  def create_pentagon(radius = 1.m)
+    pts = (0...5).map { |i|
+      angle = 2 * Math::PI * i / 5
+      Geom::Point3d.new(radius * Math.cos(angle), radius * Math.sin(angle), 0)
+    }
+    Sketchup.active_model.active_entities.add_face(pts)
+  end
+
+  def test_export_triangulate_off_quad
+    # With triangulation disabled (default), a quad exports as one f line with 4 indices.
+    create_single_quad
+    content = read_obj(do_export(
+      units: QFT::ExporterOBJ::UNIT_METERS, swap_yz: false,
+      texture_maps: false, triangulate: false
+    ))
+    f_lines = obj_lines(content, 'f ')
+    assert_equal(1, f_lines.size, 'Expected 1 face line for untriangulated quad')
+    assert_equal(4, f_lines.first.split.size - 1, 'Quad face must reference 4 vertices')
+  end
+
+  def test_export_triangulate_on_quad
+    # Quads (4 verts) are left intact even when triangulation is enabled.
+    # Only n-gons (5+ verts) are triangulated.
+    create_single_quad
+    content = read_obj(do_export(
+      units: QFT::ExporterOBJ::UNIT_METERS, swap_yz: false,
+      texture_maps: false, triangulate: true
+    ))
+    f_lines = obj_lines(content, 'f ')
+    assert_equal(1, f_lines.size, 'Quad must not be split when triangulate is enabled')
+    assert_equal(4, f_lines.first.split.size - 1, 'Quad face must still reference 4 vertices')
+  end
+
+  def test_export_triangulate_on_ngon
+    # With triangulation enabled, a pentagon (5 verts) produces n-2 = 3 triangles.
+    create_pentagon
+    content = read_obj(do_export(
+      units: QFT::ExporterOBJ::UNIT_METERS, swap_yz: false,
+      texture_maps: false, triangulate: true
+    ))
+    f_lines = obj_lines(content, 'f ')
+    assert_equal(3, f_lines.size, 'Pentagon should triangulate into 3 faces')
+    f_lines.each { |line|
+      assert_equal(3, line.split.size - 1, 'Each triangle must reference exactly 3 vertices')
+    }
+  end
+
+
   # ======= Performance benchmarks =======
   # These tests measure duration but only assert a generous upper bound.
   # Run them to compare timings before/after optimisation changes.
