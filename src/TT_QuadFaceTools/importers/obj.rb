@@ -130,6 +130,10 @@ class ObjImporter < Sketchup::Importer
     smoothing_group = nil
     # Statistics over the imported OBJ data.
     @stats = Statistics.new
+    # Pending polygon batches for bulk geometry creation via PolygonMesh.
+    # Key: [entities.object_id, material.object_id | nil]
+    # Used for faces that need neither UV mapping nor smoothing-group tracking.
+    pending_meshes = {}
     Sketchup.status_text = 'Importing OBJ file...'
     # @see http://paulbourke.net/dataformats/obj/
     # @see http://www.martinreddy.net/gfx/3d/OBJ.spec
@@ -215,14 +219,26 @@ class ObjImporter < Sketchup::Importer
             end
           }
           unless @parse_only
-            face = create_face(entities, points, material, mapping)
-            if face.nil?
-              stats.errors += 1
-              next
-            end
-            if smoothing_group
-              smoothing_groups[smoothing_group] ||= []
-              smoothing_groups[smoothing_group] << face
+            if mapping.empty? && !smoothing_group
+              # Fast path: accumulate into a PolygonMesh for bulk creation.
+              # Cannot be used when UV mapping or smoothing-group membership is
+              # needed, as both require a face object after creation.
+              key = [entities.object_id, material&.object_id]
+              batch = pending_meshes[key] ||= {
+                entities: entities, material: material, polygons: []
+              }
+              batch[:polygons] << points
+            else
+              # Standard path: UV mapping or smoothing-group tracking required.
+              face = create_face(entities, points, material, mapping)
+              if face.nil?
+                stats.errors += 1
+                next
+              end
+              if smoothing_group
+                smoothing_groups[smoothing_group] ||= []
+                smoothing_groups[smoothing_group] << face
+              end
             end
           end
           stats.faces += 1
@@ -259,9 +275,7 @@ class ObjImporter < Sketchup::Importer
             next unless result
             library = result[1]
             library_file = find_file(library, filename)
-            # TODO: Refactor puts to debug and/or logging.
-            puts "falling back to trying: #{library_file}"
-            loaded ||= materials.read(library_file)
+              loaded ||= materials.read(library_file)
           end
           raise ObjEncodingError if !loaded && custom_encodings
         when 'usemtl'
@@ -280,7 +294,6 @@ class ObjImporter < Sketchup::Importer
           if material.nil?
             # TODO: Message error back to user without raising error. Need to
             # continue reading file.
-            puts "material not found: #{material_name}" if definition.nil?
             material = model.materials.current
           end
         else
@@ -306,6 +319,7 @@ class ObjImporter < Sketchup::Importer
       raise 'MAX ATTEMPTS' if attempts > Encoding.list.size
       retry
     end
+    flush_pending_meshes(pending_meshes) unless @parse_only
     apply_smoothing_groups(smoothing_groups)
     model.commit_operation
     Sketchup.status_text = ''
@@ -354,6 +368,24 @@ class ObjImporter < Sketchup::Importer
     end
   end
 
+  # Creates all accumulated PolygonMesh batches in bulk.
+  # Each batch represents faces that share the same entities context and
+  # material and required neither UV mapping nor smoothing-group tracking.
+  #
+  # @param [Hash] pending_meshes
+  # @return [nil]
+  def flush_pending_meshes(pending_meshes)
+    pending_meshes.each_value { |batch|
+      polygons = batch[:polygons]
+      # Allocate the mesh with an upper-bound vertex count to avoid rehashing.
+      mesh = Geom::PolygonMesh.new(polygons.sum(&:size))
+      polygons.each { |pts| mesh.add_polygon(*pts) }
+      # smooth_flags = 0: no automatic smoothing; preserve hard edges.
+      batch[:entities].add_faces_from_mesh(mesh, 0, batch[:material])
+    }
+    nil
+  end
+
   # @param [Hash{Integer => Array<Sketchup::Face, QuadFace>}] smoothing_groups
   #
   # @return [Nil]
@@ -397,12 +429,8 @@ class ObjImporter < Sketchup::Importer
         begin
           face.position_material(material, mapping, true)
           face.position_material(material, mapping, false)
-        rescue ArgumentError => error
+        rescue ArgumentError
           # TODO: Warn user about error. Log to error file.
-          puts "Failed to map #{face} (#{face.entityID})"
-          p mapping
-          p error
-          puts error.backtrace.join("\n")
           face.material = material
           face.back_material = material
         end
@@ -424,12 +452,8 @@ class ObjImporter < Sketchup::Importer
         begin
           face.uv_set(material, quad_mapping, true)
           face.uv_set(material, quad_mapping, false)
-        rescue ArgumentError => error
+        rescue ArgumentError
           # TODO: Warn user about error.
-          puts "Failed to map quad #{face}"
-          p mapping
-          p error
-          puts error.backtrace.join("\n")
           face.material = material
           face.back_material = material
         end
@@ -449,11 +473,7 @@ class ObjImporter < Sketchup::Importer
       raise 'cannot import n-gons which are not planar'
     end
     face
-  rescue => error
-    puts points.inspect.gsub(/Point3d/, 'Geom::Point3d.new')
-    p error
-    puts error.backtrace.join("\n")
-    #raise
+  rescue
     nil
   end
 

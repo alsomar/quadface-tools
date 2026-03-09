@@ -279,6 +279,36 @@ class TC_ObjImporter < TestUp::TestCase
   end
 
 
+  def test_import_negative_obj_creates_geometry
+    # negative.obj has 2 quads with negative vertex indices, no UV mapping,
+    # no materials and no smoothing groups — all faces use the PolygonMesh
+    # fast path (mapping.empty? && !smoothing_group).
+    model = Sketchup.active_model
+    obj_file = get_test_obj('negative.obj')
+
+    options = {
+      units: QFT::ObjImporter::UNIT_INCHES,
+      swap_yz: false,
+    }
+    importer = get_importer(options) # parse_only: false (default)
+
+    importer.load_file(obj_file, false)
+
+    # The importer wraps everything in one root group.
+    root_instances = model.entities.grep(Sketchup::Group)
+    assert_equal(1, root_instances.size, 'Expected 1 root import group')
+
+    # negative.obj has no o/g tokens so faces live directly in the root group.
+    root_entities = root_instances.first.definition.entities
+
+    faces = root_entities.grep(Sketchup::Face)
+    assert_equal(2, faces.size, 'Expected 2 faces (PolygonMesh path)')
+
+    edges = root_entities.grep(Sketchup::Edge)
+    assert_equal(7, edges.size, 'Expected 7 edges (2 quads sharing 1 interior edge)')
+  end
+
+
   # ======= Performance benchmarks =======
   # These tests measure duration but only assert a generous upper bound.
   # Run them to compare timings before/after optimisation changes.
