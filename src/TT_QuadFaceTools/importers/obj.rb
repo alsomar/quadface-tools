@@ -424,7 +424,7 @@ class ObjImporter < Sketchup::Importer
       # a neighbouring face - and this isn't always ideal. For instance,
       # internal faces can easily affect exterior faces like this.
       face.reverse! if face_reversed?(points, face)
-      if textured?(material) && (2..8).include?(mapping.size)
+      if textured?(material) && !mapping.empty?
         # p ['mapping', material, mapping]
         begin
           face.position_material(material, mapping, true)
